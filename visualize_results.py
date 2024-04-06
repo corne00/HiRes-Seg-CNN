@@ -71,8 +71,8 @@ def visualize_results_deepglobe(dataset, models, model_names=None, num_examples=
 
         with torch.no_grad():
             for model in models:
-                pred = model(image.to(device, dtype=torch.float).unsqueeze(0)).cpu()
-                metrics = compute_metrics(pred, dim=1)
+                pred = model(image.to(device="cuda:0", dtype=torch.float).unsqueeze(0)).cpu()
+                metric = compute_metrics(pred, dim=1)
                 pred = labelmap_to_colormap(pred)
 
                 preds.append(pred)
