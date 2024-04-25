@@ -1,0 +1,15 @@
+
+*.png
+*.txt
+*.jpg
+*.pth
+*.pyc
+*.pyc
+dataset_tools/__pycache__/__init__.cpython-311.pyc
+*.pyc
+dataset_tools/__pycache__/SyntheticDataset.cpython-311.pyc
+dataset_tools/__pycache__/MassachussetsBuildingsDatatools.cpython-311.pyc
+dataset_tools/__pycache__/DataSets.cpython-311.pyc
+dataset_tools/__pycache__/dataset_components.cpython-311.pyc
+dataset_tools/__pycache__/dataset.cpython-311.pyc
+dataset_tools/__pycache__/__init__.cpython-311.pyc
