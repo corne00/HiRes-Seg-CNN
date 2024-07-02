@@ -5,7 +5,8 @@ from .sub_modules import CNNCommunicator, Encoder, Decoder
 
 class MultiGPU_UNet_with_comm(nn.Module):
     def __init__(self, n_channels, n_classes, input_shape, num_comm_fmaps, devices, depth=3, subdom_dist=(2, 2),
-                 bilinear=False, comm=True, complexity=32, dropout_rate=0.1, kernel_size=5, padding=2, communicator_type=None):
+                 bilinear=False, comm=True, complexity=32, dropout_rate=0.1, kernel_size=5, padding=2, 
+                 communicator_type=None, comm_network_but_no_communication=False):
         super(MultiGPU_UNet_with_comm, self).__init__()
 
         self.n_channels = n_channels
@@ -23,6 +24,7 @@ class MultiGPU_UNet_with_comm(nn.Module):
         self.kernel_size = kernel_size
         self.padding = padding
         self.communicator_type = communicator_type
+        self.comm_network_but_no_communication = comm_network_but_no_communication
 
         self.init_encoders()
         self.init_decoders()
@@ -87,24 +89,34 @@ class MultiGPU_UNet_with_comm(nn.Module):
         outputs_encoders = [self.encoders[index](input_image) for index, input_image in enumerate(input_images_on_devices)]
 
         # Do the communication step. Replace the encoder outputs by the communication output feature maps
-        if self.comm:
-            communication_input = self.concatenate_tensors([output_encoder[-1][:, -self.num_comm_fmaps:, :, :].clone() for output_encoder in outputs_encoders])
-            communication_output = self.communication_network(communication_input)
-            communication_output_split = self._split_concatenated_tensor(communication_output)
-            
-            for idx, output_communication in enumerate(communication_output_split):
-                outputs_encoders[idx][-1][:, -self.num_comm_fmaps:, :, :] = output_communication
+        inputs_decoders = [[x.clone() for x in y] for y in outputs_encoders]
 
+        if self.comm:
+            if not self.comm_network_but_no_communication:
+                communication_input = self.concatenate_tensors([output_encoder[-1][:, -self.num_comm_fmaps:, :, :].clone() for output_encoder in outputs_encoders])
+                communication_output = self.communication_network(communication_input)
+                communication_output_split = self._split_concatenated_tensor(communication_output)
+                
+                for idx, output_communication in enumerate(communication_output_split):
+                    inputs_decoders[idx][-1][:, -self.num_comm_fmaps:, :, :] = output_communication
+            
+            elif self.comm_network_but_no_communication:        
+                communication_inputs = [output_encoder[-1][:, -self.num_comm_fmaps:, :, :].clone() for output_encoder in outputs_encoders]
+                communication_outputs = [self.communication_network(comm_input.to(self.devices[0])) for comm_input in communication_inputs]
+                
+                for idx, output_communication in enumerate(communication_outputs):
+                    inputs_decoders[idx][-1][:, -self.num_comm_fmaps:, :, :] = output_communication.to(self._select_device(idx))
+                    
         # Do the decoding step
-        outputs_decoders = [self.decoders[index](output_encoder) for index, output_encoder in enumerate(outputs_encoders)]
+        outputs_decoders = [self.decoders[index](output_encoder) for index, output_encoder in enumerate(inputs_decoders)]
         prediction = self.concatenate_tensors(outputs_decoders)
                
         return prediction
 
     def save_weights(self, save_path):
         state_dict = {
-            'encoder_state_dict': [encoder.state_dict() for encoder in self.encoders],
-            'decoder_state_dict': [decoder.state_dict() for decoder in self.decoders]
+            'encoder_state_dict': [self.encoders[0].state_dict()],
+            'decoder_state_dict': [self.decoders[0].state_dict()]
         }
         if self.comm:
             state_dict['communication_network_state_dict'] = self.communication_network.state_dict()
@@ -112,9 +124,15 @@ class MultiGPU_UNet_with_comm(nn.Module):
 
     def load_weights(self, load_path):
         checkpoint = torch.load(load_path)
-        for encoder, encoder_state in zip(self.encoders, checkpoint['encoder_state_dict']):
+        encoder_state = checkpoint['encoder_state_dict'][0]
+        decoder_state = checkpoint['decoder_state_dict'][0]
+
+        for encoder in self.encoders:
             encoder.load_state_dict(encoder_state)
-        for decoder, decoder_state in zip(self.decoders, checkpoint['decoder_state_dict']):
+        for decoder in self.decoders:
             decoder.load_state_dict(decoder_state)
         if self.comm and 'communication_network_state_dict' in checkpoint:
             self.communication_network.load_state_dict(checkpoint['communication_network_state_dict'])
+        else:
+            print("No communication network found in dataset / no comm. network found")
+            
